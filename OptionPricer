@@ -1,0 +1,91 @@
+library(caret)
+library(randomForest)
+library(Boruta)
+library(writexl)
+
+
+#Loading  data
+dataset<-read.csv("SimulatedOptionPriceHistory-1.csv",stringsAsFactors = T)
+
+#Data exploration
+dataset$Time.to.Maturity <- as.numeric(dataset$Time.to.Maturity)
+dataset$Day.Index <- as.numeric(dataset$Day.Index)
+sum(is.na(dataset))
+str(dataset)
+
+###use a binary classifier for the categorical variables 
+dmy <- dummyVars(" ~ .", data = dataset,fullRank = F)
+transformed_dataset <- data.frame(predict(dmy, newdata = dataset))
+transformed_dataset <- transformed_dataset[,2:10]
+str(transformed_dataset)
+sum(is.na(dataset))
+
+#Spliting training set into two parts based on outcome: 75% and 25%
+index <- createDataPartition(transformed_dataset$OptionPrice, p=0.75, list=FALSE)
+trainSet <- transformed_dataset[ index,]
+testSet <- transformed_dataset[-index,]
+
+
+######  feature selection using Boruta 
+set.seed(13)
+bor.model <- Boruta(OptionPrice~ ., data = trainSet, maxRuns=101, doTrace=0)
+summary(bor.model)
+boruta.cor.matrix <- attStats(bor.model)
+important.features <- names(trainSet)[bor.model$finalDecision!="Rejected"]
+important.features
+boruta.cor.matrix
+plot(bor.model, cex.axis=.7, las=2, xlab="", main="Variable Importance") 
+
+#Remove irrelevant features from the dataset
+trainSet <- trainSet[,-5]
+testSet <- testSet[,-5]
+
+
+##Run the model 
+
+fitControl <- trainControl(
+  method = "repeatedcv",
+  number = 5,
+  repeats = 5)
+
+set.seed(13)
+model_nnet<-train(trainSet[,1:7],trainSet[,8], method='nnet',trControl=fitControl,linout = TRUE,preProcess=c("scale","center"))
+print(model_nnet)
+plot(model_nnet)
+
+#Plotting Variable importance for NNET
+plot(varImp(object=model_nnet),main="NNET - Variable Importance")
+varImp(object=model_nnet)
+
+
+#Predictions
+predictions<-predict.train(object=model_nnet,testSet[,1:8])
+predictions
+
+
+Predictions <- as.data.frame(predictions)
+Predictions$actuals <- testSet$OptionPrice
+names(Predictions)[1]<-paste("predicted_OptionPrice")
+names(Predictions)[2]<-paste("Actual_OptionPrice")
+cor(Predictions$predicted_OptionPrice, Predictions$Actual_OptionPrice)
+
+
+#Write to an external file
+write_xlsx(Predictions,"pre.xlsx")
+
+
+#
+rmse <- function(error)
+{
+  sqrt(mean(error^2))
+}
+
+
+
+## compute the RMSE
+error <- Predictions$Actual_OptionPrice - Predictions$predicted_OptionPrice
+error_test= rmse(error)
+error_test
+
+
+
